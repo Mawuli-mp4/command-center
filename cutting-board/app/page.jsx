@@ -276,7 +276,7 @@ export default function Board() {
   }, [s]);
 
   const queue = useMemo(() => {
-    if (!s) return [];
+      if (!s?.projects) return [];
     const proj = Object.fromEntries(s.projects.map((p) => [p.id, p]));
     return s.tasks
       .filter((t) => !t.done && proj[t.project_id]?.status === 'active' && (bothBlocks || t.compute === mode))
