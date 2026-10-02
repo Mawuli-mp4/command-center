@@ -9,6 +9,7 @@ export async function POST() {
   await sql`CREATE TABLE IF NOT EXISTS tasks (
     id SERIAL PRIMARY KEY, project_id INT REFERENCES projects(id) ON DELETE CASCADE,
     title TEXT NOT NULL, compute TEXT DEFAULT 'low', done BOOLEAN DEFAULT false,
+    done_at TIMESTAMPTZ, est_hours NUMERIC,
     due DATE, sort INT DEFAULT 0, created_at TIMESTAMPTZ DEFAULT now())`;
   await sql`CREATE TABLE IF NOT EXISTS updates (
     id SERIAL PRIMARY KEY, project_id INT REFERENCES projects(id) ON DELETE CASCADE,
@@ -21,8 +22,9 @@ export async function POST() {
     for (const [i, p] of SEED.entries()) {
       const [row] = await sql`INSERT INTO projects (name, lane, priority, deadline, summary, sort)
         VALUES (${p.name}, ${p.lane}, ${p.priority}, ${p.deadline}, ${p.summary}, ${i}) RETURNING id`;
-      for (const [j, [title, compute]] of p.tasks.entries()) {
-        await sql`INSERT INTO tasks (project_id, title, compute, sort) VALUES (${row.id}, ${title}, ${compute}, ${j})`;
+      for (const [j, [title, compute, est = null]] of p.tasks.entries()) {
+        await sql`INSERT INTO tasks (project_id, title, compute, est_hours, sort)
+          VALUES (${row.id}, ${title}, ${compute}, ${est}, ${j})`;
       }
     }
   }

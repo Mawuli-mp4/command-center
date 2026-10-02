@@ -1,4 +1,5 @@
 // Initial board, from the Oct 2026 post–Climate Week debrief.
+// [title, compute, estimated hours?]
 // compute: 'high' = 7am–3pm workstation block, 'low' = laptop block after 3pm.
 export const SEED = [
   {
@@ -19,13 +20,13 @@ export const SEED = [
     name: 'Wedding edit, v1', lane: 'Production', priority: 0, deadline: '2026-10-03',
     summary: '30-minute cut. Budget 10–15 hours, workstation only.',
     tasks: [
-      ['Ingest, organize bins, sync audio', 'high'],
-      ['Selects and string-out', 'high'],
-      ['30-minute assembly', 'high'],
-      ['Fine cut and music', 'high'],
-      ['Color pass', 'high'],
-      ['Sound mix', 'high'],
-      ['Export v1 and send to client', 'high'],
+      ['Ingest, organize bins, sync audio', 'high', 1.5],
+      ['Selects and string-out', 'high', 2.5],
+      ['30-minute assembly', 'high', 4],
+      ['Fine cut and music', 'high', 3],
+      ['Color pass', 'high', 2],
+      ['Sound mix', 'high', 1.5],
+      ['Export v1 and send to client', 'high', 1],
     ],
   },
   {
@@ -78,3 +79,9 @@ export const SEED = [
     ],
   },
 ];
+
+// Hour estimates backfilled into boards created before estimates existed.
+export const EST_BACKFILL = {
+  'Ingest, organize bins, sync audio': 1.5, 'Selects and string-out': 2.5, '30-minute assembly': 4,
+  'Fine cut and music': 3, 'Color pass': 2, 'Sound mix': 1.5, 'Export v1 and send to client': 1,
+};
