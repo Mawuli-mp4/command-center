@@ -2,9 +2,10 @@ import { sql } from './db';
 import { EST_BACKFILL } from './seed';
 
 let done = false;
-// Adds columns introduced in v2 to boards created with v1. Safe to run repeatedly.
+// Brings older boards up to date (new columns, settings table). Safe to run repeatedly.
 export async function migrate() {
   if (done) return;
+  await sql`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value JSONB NOT NULL, updated_at TIMESTAMPTZ DEFAULT now())`;
   const cols = await sql`SELECT column_name FROM information_schema.columns WHERE table_name = 'tasks'`;
   const have = new Set(cols.map((c) => c.column_name));
   if (!have.has('done_at')) {

@@ -1,6 +1,6 @@
 # Cutting Board
 
-Personal project dashboard. Next.js on Vercel, Vercel Postgres (Neon), installable on iPhone from Safari, push notifications at 7 am and 3 pm Montreal time.
+Personal project dashboard. Next.js on Vercel, Vercel Postgres (Neon), installable on iPhone from Safari, push notifications at the start of each work block (Montreal time).
 
 ## Deploy (about 15 minutes)
 
@@ -22,11 +22,13 @@ Safari → open the URL → Share → Add to Home Screen. Open **Board** from th
 
 ## Daily use
 
-- The header shows which block you're in: workstation (7 am–3 pm, tungsten) or laptop (daylight). "Up next" only shows tasks for the current block.
+- Work blocks: tap **Work hours** in the header to set a workstation window per day (default Mon–Fri 10 am–8 pm). Every other hour is laptop time. Saved to the database, so it applies everywhere, including the notification briefs.
+- "Up next" shows tasks for the current block. Switch Projects to **Board** for a column view (Workstation / Laptop / Done today); drag cards or tap the arrow to move them.
+- Projects disappear from the main list once wrapped or every task is ticked. Find them under **Completed** at the bottom of Projects.
 - Tap a task's block tag to move it between blocks.
 - **Log update**: tap the mic on the iOS keyboard and talk. File it under one project, or let AI split it across projects, tick off finished tasks and add new ones. You review before anything saves.
 
 ## Notes
 
-- Crons run at 11:00 and 19:00 UTC: 7 am / 3 pm during daylight time, 6 am / 2 pm after Nov 1. Edit `vercel.json` in winter.
+- Crons run at 14:00 UTC daily and 00:00 UTC Tue–Sat: 10 am / 8 pm Montreal during daylight time, 9 am / 7 pm after Nov 1.
 - Seed data lives in `lib/seed.js`; it only loads into an empty database.

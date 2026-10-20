@@ -1,6 +1,6 @@
 // Initial board, from the Oct 2026 post–Climate Week debrief.
 // [title, compute, estimated hours?]
-// compute: 'high' = 7am–3pm workstation block, 'low' = laptop block after 3pm.
+// compute: 'high' = workstation block (Mon–Fri 10 am–8 pm), 'low' = laptop hours (everything else).
 export const SEED = [
   {
     name: 'Creator incubation deck', lane: 'Strategy', priority: 0, deadline: '2026-10-04',

@@ -1,6 +1,0 @@
-{
-  "crons": [
-    { "path": "/api/cron/brief?mode=morning", "schedule": "0 14 * * *" },
-    { "path": "/api/cron/brief?mode=evening", "schedule": "0 0 * * 2-6" }
-  ]
-}

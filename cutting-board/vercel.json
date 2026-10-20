@@ -1,6 +1,6 @@
 {
   "crons": [
-    { "path": "/api/cron/brief?mode=high", "schedule": "0 11 * * *" },
-    { "path": "/api/cron/brief?mode=low", "schedule": "0 19 * * *" }
+    { "path": "/api/cron/brief?mode=morning", "schedule": "0 14 * * *" },
+    { "path": "/api/cron/brief?mode=evening", "schedule": "0 0 * * 2-6" }
   ]
 }

@@ -1,29 +1,22 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { DEFAULT_SCHEDULE, DAY_NAMES, normalizeSchedule, addDays, dayHours, montrealNow, blockAt, nextSwitch, wsHoursThrough, fmtHour, summarize } from '@/lib/hours';
 
-const TZ = 'America/Toronto'; // Montreal
-const HIGH_START = 7;
-const HIGH_END = 15;
+const VIEW_KEY = 'cb.view';
 const LANE_COLORS = { Strategy: '#6120ee', Production: '#4a17b0', Hopamine: '#0a8fb0', Business: '#ab77ff' };
 const FALLBACK = ['#0a4dce', '#6120ee', '#0a8fb0', '#ab77ff', '#4a17b0'];
 const laneColor = (l) => LANE_COLORS[l] || FALLBACK[[...(l || 'Other')].reduce((a, c) => a + c.charCodeAt(0), 0) % FALLBACK.length];
 
 /* ---------------- helpers ---------------- */
 function montreal() {
-  const p = new Intl.DateTimeFormat('en-CA', {
-    timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
-  }).formatToParts(new Date());
-  const g = (t) => p.find((x) => x.type === t).value;
-  const date = `${g('year')}-${g('month')}-${g('day')}`;
-  const noon = new Date(`${date}T12:00:00Z`);
+  const n = montrealNow();
+  const noon = new Date(`${n.date}T12:00:00Z`);
   return {
-    date, hour: Number(g('hour')) % 24, minute: Number(g('minute')),
+    ...n,
     weekday: noon.toLocaleDateString('en-CA', { weekday: 'long', timeZone: 'UTC' }),
     monthYear: noon.toLocaleDateString('en-CA', { month: 'long', year: 'numeric', timeZone: 'UTC' }),
-    day: g('day'),
   };
 }
-const addDays = (d, n) => new Date(Date.parse(`${d}T12:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
 const daysUntil = (d, today) => Math.round((Date.parse(d) - Date.parse(today)) / 864e5);
 const shortDay = (d) => new Date(`${d}T12:00:00Z`).toLocaleDateString('en-CA', { weekday: 'short', timeZone: 'UTC' });
 const monthDay = (d) => new Date(`${d}T12:00:00Z`).toLocaleDateString('en-CA', { month: 'short', day: 'numeric', timeZone: 'UTC' });
@@ -71,12 +64,15 @@ function Pixel({ i, size, style, className = '' }) {
 }
 
 /* ---------------- band ---------------- */
-function Band({ clock, mode, onLog, onNotify, pushState }) {
+function Band({ clock, mode, sched, onLog, onNotify, onHours, pushState }) {
   const [text, setText] = useState('');
   const inputRef = useRef(null);
   const mins = clock.hour * 60 + clock.minute;
-  const end = mode === 'high' ? HIGH_END * 60 : clock.hour >= HIGH_END ? (24 + HIGH_START) * 60 : HIGH_START * 60;
-  const left = end - mins;
+  const hrs = dayHours(sched, clock.date);
+  const sw = nextSwitch(sched, clock.date, clock.hour, clock.minute);
+  const leftText = sw.mins <= 24 * 60
+    ? `${Math.floor(sw.mins / 60)}h ${String(sw.mins % 60).padStart(2, '0')}m left`
+    : sw.nextWsDate ? `Workstation ${shortDay(sw.nextWsDate)} ${fmtHour(sw.nextStart)}` : 'No workstation hours set';
   const hhmm = `${String(clock.hour).padStart(2, '0')}:${String(clock.minute).padStart(2, '0')}`;
   return (
     <div className="band">
@@ -100,8 +96,9 @@ function Band({ clock, mode, onLog, onNotify, pushState }) {
               <div className="date-txt"><b>{clock.weekday}</b><span>{clock.monthYear}</span></div>
             </div>
             <div className="block-row">
-              <span className={`chip ${mode === 'low' ? 'low' : ''}`}><i />{mode === 'high' ? 'Workstation block' : 'Laptop block'}</span>
-              <span className="chip">{Math.floor(left / 60)}h {String(left % 60).padStart(2, '0')}m left</span>
+              <span className={`chip ${mode === 'low' ? 'low' : ''}`}><i />{mode === 'high' ? 'Workstation block' : hrs ? 'Laptop block' : 'Laptop day'}</span>
+              <span className="chip">{leftText}</span>
+              <button type="button" className="chip chip-btn" onClick={onHours}>Work hours</button>
             </div>
           </div>
           <div className="ask">
@@ -118,13 +115,14 @@ function Band({ clock, mode, onLog, onNotify, pushState }) {
           </div>
         </section>
         <div className="strip">
-          <div className="track" role="img" aria-label={`Now ${hhmm}. Workstation block runs 7 am to 3 pm.`}>
-            <span className="seg hi" style={{ left: `${(HIGH_START / 24) * 100}%`, width: `${((HIGH_END - HIGH_START) / 24) * 100}%` }} />
+          <div className="track" role="img" aria-label={`Now ${hhmm}. ${hrs ? `Workstation block runs ${fmtHour(hrs.start)} to ${fmtHour(hrs.end)} today.` : 'No workstation block today: laptop hours all day.'}`}>
+            {hrs && <span className="seg hi" style={{ left: `${(hrs.start / 24) * 100}%`, width: `${((hrs.end - hrs.start) / 24) * 100}%` }} />}
             <span className="ph" style={{ left: `${(mins / 1440) * 100}%` }}><span>{hhmm}</span></span>
           </div>
           <div className="ticks" aria-hidden="true">
-            <span>0:00</span><span style={{ left: `${(7 / 24) * 100}%` }}>7:00</span>
-            <span style={{ left: `${(15 / 24) * 100}%` }}>15:00</span><span style={{ left: '100%' }}>24:00</span>
+            <span>0:00</span>
+            {hrs && hrs.start > 1.5 && <span style={{ left: `${(hrs.start / 24) * 100}%` }}>{fmtHour(hrs.start)}</span>}
+            {hrs && hrs.end < 22.5 && <span style={{ left: `${(hrs.end / 24) * 100}%` }}>{fmtHour(hrs.end)}</span>}<span style={{ left: '100%' }}>24:00</span>
           </div>
         </div>
       </div>
@@ -222,20 +220,21 @@ function AddTask({ projectId, defaultCompute, onAdd }) {
   );
 }
 
-function ProjectRow({ p, tasks, today, open, onOpen, actions, mode }) {
+function ProjectRow({ p, tasks, today, open, onOpen, actions, mode, complete }) {
   const done = tasks.filter((t) => t.done).length;
   const pct = tasks.length ? (done / tasks.length) * 100 : 0;
   const d = p.deadline ? daysUntil(p.deadline, today) : null;
   const color = laneColor(p.lane);
   return (
-    <div className={`proj ${p.status}`} data-open={open ? 1 : 0}>
+    <div className={`proj ${p.status} ${complete ? 'complete' : ''}`} data-open={open ? 1 : 0}>
       <button className="proj-h" aria-expanded={open} onClick={onOpen}>
         <span className="mark" style={{ background: color }}>{initials(p.name)}</span>
         <span>
           <span className="p-name">{p.name}<small>{done}/{tasks.length}</small></span>
           <span className="bar"><span style={{ width: `${pct}%`, background: color }} /></span>
           <span className="p-meta">
-            {p.lane || 'No lane'} · {p.status === 'active'
+            {p.lane || 'No lane'} · {complete ? (p.status === 'done' ? 'Wrapped' : 'All tasks done')
+              : p.status === 'active'
               ? <span className={d !== null && d <= 1 ? 'hot' : ''}>{dueText(d)}</span>
               : p.status === 'done' ? 'Wrapped' : 'Paused'}
           </span>
@@ -265,6 +264,154 @@ function ProjectRow({ p, tasks, today, open, onOpen, actions, mode }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ---------------- view switch + task board ---------------- */
+function ViewTabs({ view, setView }) {
+  return (
+    <div className="tabs" role="group" aria-label="Task view">
+      <button aria-pressed={view === 'list'} onClick={() => setView('list')}>List</button>
+      <button aria-pressed={view === 'board'} onClick={() => setView('board')}>Board</button>
+    </div>
+  );
+}
+
+const COLUMNS = [
+  { key: 'high', label: 'Workstation' },
+  { key: 'low', label: 'Laptop', sub: 'All other hours' },
+  { key: 'done', label: 'Done today', sub: 'Closed since midnight' },
+];
+
+function TaskCard({ t, p, today, actions, dragging, setDragging }) {
+  const color = laneColor(p.lane);
+  const d = p.deadline ? daysUntil(p.deadline, today) : null;
+  const other = t.compute === 'high' ? 'Laptop' : 'Workstation';
+  return (
+    <li className={`tcard ${t.done ? 'done' : ''} ${dragging === t.id ? 'dragging' : ''}`} draggable
+      onDragStart={(e) => { e.dataTransfer.setData('text/plain', String(t.id)); e.dataTransfer.effectAllowed = 'move'; setDragging(t.id); }}
+      onDragEnd={() => setDragging(null)}>
+      <span className="tc-lane" style={{ background: color }} aria-hidden="true" />
+      <label className="tc-main">
+        <input type="checkbox" checked={t.done} onChange={() => actions.toggle(t)} />
+        <span className="box" aria-hidden="true" />
+        <span className="tc-text">
+          <span className="tc-title">{t.title}</span>
+          <span className="tc-meta">
+            <span>{p.name}</span>
+            {t.est_hours ? <span>~{t.est_hours}h</span> : null}
+            {!t.done && d !== null && d <= 3 && <span className={d <= 1 ? 'hot' : ''}>{dueText(d)}</span>}
+          </span>
+        </span>
+      </label>
+      {!t.done && (
+        <button type="button" className="tc-move" onClick={() => actions.flip(t)} aria-label={`Move to ${other} block`}>
+          {other === 'Laptop' ? '→ Laptop' : '← Workstation'}
+        </button>
+      )}
+    </li>
+  );
+}
+
+function TaskBoard({ cols, proj, mode, today, actions, view, setView, hoursLeft, sched }) {
+  const [dragging, setDragging] = useState(null);
+  const [over, setOver] = useState(null);
+  const all = [...cols.high, ...cols.low, ...cols.done];
+  function drop(key, e) {
+    e.preventDefault(); setOver(null);
+    const t = all.find((x) => x.id === Number(e.dataTransfer.getData('text/plain')));
+    if (!t) return;
+    if (key === 'done') { if (!t.done) actions.toggle(t); return; }
+    if (t.done) actions.toggle(t);
+    if (t.compute !== key) actions.flip(t);
+  }
+  return (
+    <section className="card c-board">
+      <div className="head">
+        <div><h2>Task board</h2><div className="sub">Drag a card, or tap its arrow, to move it between blocks</div></div>
+        <ViewTabs view={view} setView={setView} />
+      </div>
+      <div className="cols">
+        {COLUMNS.map((c) => {
+          const list = cols[c.key];
+          const est = list.reduce((a, t) => a + (Number(t.est_hours) || 0), 0);
+          const now = c.key === mode;
+          const sub = c.key === 'high' ? summarize(sched) : c.sub;
+          return (
+            <div key={c.key} className={`col ${c.key} ${now ? 'now' : ''} ${over === c.key ? 'over' : ''}`}
+              onDragOver={(e) => { e.preventDefault(); setOver(c.key); }} onDragLeave={() => setOver(null)} onDrop={(e) => drop(c.key, e)}>
+              <div className="col-h">
+                <div className="col-t"><i />{c.label}<b>{list.length}</b>{now && <span className="now-chip">Now</span>}</div>
+                <div className="col-s">
+                  {c.key === 'done' ? sub
+                    : <>{sub}{est > 0 && <> · ~{Math.round(est * 10) / 10}h estimated</>}{c.key === 'high' && hoursLeft > 0 && <> · {Math.round(hoursLeft * 10) / 10}h left today</>}</>}
+                </div>
+              </div>
+              <ul className="col-list">
+                {list.length
+                  ? list.map((t) => <TaskCard key={t.id} t={t} p={proj[t.project_id]} today={today} actions={actions} dragging={dragging} setDragging={setDragging} />)
+                  : <li className="col-empty">{c.key === 'done' ? 'Close a task and it lands here.' : 'Nothing here. Drag a card in.'}</li>}
+              </ul>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+/* ---------------- work hours sheet ---------------- */
+const HOUR_OPTS = Array.from({ length: 49 }, (_, i) => i / 2);
+function HoursSheet({ sched, onClose, onSave }) {
+  const [rows, setRows] = useState(sched.map((d) => ({ ...d })));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const set = (i, f) => setRows((r) => r.map((d, j) => (j === i ? { ...d, ...f } : d)));
+  const order = [1, 2, 3, 4, 5, 6, 0];
+  const bad = rows.some((d) => d.on && d.end <= d.start);
+  async function save() {
+    setBusy(true); setErr('');
+    try { await onSave(rows); } catch (e) { setErr(e.message); setBusy(false); }
+  }
+  return (
+    <div className="sheet-wrap" role="dialog" aria-modal="true" aria-label="Work hours">
+      <div className="sheet-scrim" onClick={onClose} />
+      <div className="sheet">
+        <div className="sheet-head"><h2>Work hours</h2><button className="x" aria-label="Close" onClick={onClose}>×</button></div>
+        <p className="summary">Set your workstation window for each day. Every other hour counts as laptop time.</p>
+        <ul className="hours">
+          {order.map((i) => {
+            const d = rows[i];
+            return (
+              <li key={i} className={d.on ? '' : 'off'}>
+                <label className="hours-day">
+                  <input type="checkbox" checked={d.on} onChange={(e) => set(i, { on: e.target.checked })} />
+                  <span className="box" aria-hidden="true" />
+                  <span>{DAY_NAMES[i]}</span>
+                </label>
+                {d.on ? (
+                  <span className="hours-range">
+                    <select aria-label={`${DAY_NAMES[i]} start`} value={d.start} onChange={(e) => set(i, { start: Number(e.target.value) })}>
+                      {HOUR_OPTS.slice(0, 48).map((h) => <option key={h} value={h}>{fmtHour(h)}</option>)}
+                    </select>
+                    <span className="hours-to">to</span>
+                    <select aria-label={`${DAY_NAMES[i]} end`} value={d.end} onChange={(e) => set(i, { end: Number(e.target.value) })}>
+                      {HOUR_OPTS.slice(1).map((h) => <option key={h} value={h}>{fmtHour(h)}</option>)}
+                    </select>
+                  </span>
+                ) : <span className="hours-off">Laptop all day</span>}
+              </li>
+            );
+          })}
+        </ul>
+        {bad && <p className="err" role="alert">Each day's end time has to be after its start time.</p>}
+        {err && <p className="err" role="alert">{err}</p>}
+        <div className="row">
+          <button className="btn out" onClick={() => setRows(DEFAULT_SCHEDULE.map((d) => ({ ...d })))}>Reset to default</button>
+          <button className="btn" disabled={busy || bad} onClick={save}>{busy ? 'Saving…' : 'Save hours'}</button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -346,6 +493,10 @@ export default function Board() {
   const [open, setOpen] = useState({});
   const [composer, setComposer] = useState(null);
   const [qAll, setQAll] = useState(false);
+  const [view, setViewState] = useState('list');
+  const [showDone, setShowDone] = useState(false);
+  const [hoursOpen, setHoursOpen] = useState(false);
+  const setView = useCallback((v) => { setViewState(v); try { localStorage.setItem(VIEW_KEY, v); } catch {} }, []);
   const [pushState, setPushState] = useState('idle');
   const [toast, setToast] = useState('');
 
@@ -357,6 +508,7 @@ export default function Board() {
   useEffect(() => {
     setClock(montreal());
     load();
+    try { const v = localStorage.getItem(VIEW_KEY); if (v === 'board' || v === 'list') setViewState(v); } catch {}
     const t = setInterval(() => setClock(montreal()), 30000);
     const vis = () => { if (document.visibilityState === 'visible') { setClock(montreal()); load(); } };
     document.addEventListener('visibilitychange', vis);
@@ -365,7 +517,8 @@ export default function Board() {
     return () => { clearInterval(t); document.removeEventListener('visibilitychange', vis); };
   }, [load]);
 
-  const mode = clock && clock.hour >= HIGH_START && clock.hour < HIGH_END ? 'high' : 'low';
+  const sched = useMemo(() => normalizeSchedule(s?.schedule), [s?.schedule]);
+  const mode = clock ? blockAt(sched, clock.date, clock.hour, clock.minute) : 'low';
   const today = clock?.date;
   const ready = !!s?.projects && !!today;
 
@@ -380,7 +533,11 @@ export default function Board() {
   const derived = useMemo(() => {
     if (!ready) return null;
     const proj = Object.fromEntries(s.projects.map((p) => [p.id, p]));
-    const active = s.projects.filter((p) => p.status === 'active');
+    // Completed = wrapped, or every task ticked. These leave the main list.
+    const isComplete = (p) => p.status === 'done' || (byProject[p.id].tasks.length > 0 && byProject[p.id].tasks.every((t) => t.done));
+    const completed = s.projects.filter(isComplete);
+    const live = s.projects.filter((p) => !isComplete(p));
+    const active = live.filter((p) => p.status === 'active');
     const activeTasks = active.flatMap((p) => byProject[p.id].tasks);
     const open = activeTasks.filter((t) => !t.done);
 
@@ -402,9 +559,7 @@ export default function Board() {
       const need = byProject[p.id].tasks.filter((t) => !t.done && t.compute === 'high' && t.est_hours).reduce((a, t) => a + Number(t.est_hours), 0);
       if (!need) continue;
       const n = daysUntil(p.deadline, today);
-      const mins = clock.hour * 60 + clock.minute;
-      const todayLeft = mins < HIGH_START * 60 ? 8 : mins >= HIGH_END * 60 ? 0 : (HIGH_END * 60 - mins) / 60;
-      fit = { p, need: Math.ceil(need), avail: Math.floor(todayLeft + 8 * n), n };
+      fit = { p, need: Math.ceil(need), avail: Math.floor(wsHoursThrough(sched, today, clock.hour, clock.minute, p.deadline)), n };
       break;
     }
 
@@ -418,13 +573,22 @@ export default function Board() {
         return pa.priority - pb.priority || (pa.deadline || '9999').localeCompare(pb.deadline || '9999') || a.sort - b.sort; })
       .slice(0, 6);
 
-    return { proj, active, open, week, pct, dueSoon, updWeek, fit, laneList, queue };
-  }, [ready, s, byProject, today, clock, mode, qAll]);
+    const sortTasks = (a, b) => { const pa = proj[a.project_id], pb = proj[b.project_id];
+      return pa.priority - pb.priority || (pa.deadline || '9999').localeCompare(pb.deadline || '9999') || a.sort - b.sort; };
+    const cols = {
+      high: open.filter((t) => t.compute === 'high').sort(sortTasks),
+      low: open.filter((t) => t.compute !== 'high').sort(sortTasks),
+      done: s.tasks.filter((t) => t.done && t.done_day === today && proj[t.project_id]),
+    };
+    const hoursLeft = wsHoursThrough(sched, today, clock.hour, clock.minute, today);
+
+    return { proj, live, completed, active, open, week, pct, dueSoon, updWeek, fit, laneList, queue, cols, hoursLeft };
+  }, [ready, s, byProject, today, clock, mode, qAll, sched]);
 
   const patchTask = (id, f) => setS((cur) => ({ ...cur, tasks: cur.tasks.map((t) => (t.id === id ? { ...t, ...f } : t)) }));
   const actions = {
     toggle: async (t) => {
-      patchTask(t.id, { done: !t.done });
+      patchTask(t.id, { done: !t.done, done_day: !t.done ? today : null });
       try { await api(`/api/tasks/${t.id}`, { method: 'PATCH', body: { done: !t.done } }); if (!t.done) say(`Closed: ${t.title}`); load(); }
       catch (e) { setErr(e.message); }
     },
@@ -480,7 +644,7 @@ export default function Board() {
   const d = derived;
   return (
     <>
-      <Band clock={clock} mode={mode} onLog={(t) => setComposer(t)} onNotify={enablePush} pushState={pushState} />
+      <Band clock={clock} mode={mode} sched={sched} onLog={(t) => setComposer(t)} onNotify={enablePush} onHours={() => setHoursOpen(true)} pushState={pushState} />
 
       <main className="wrap main">
         {err && <p className="err banner" role="alert">{err}<button className="x" aria-label="Dismiss" onClick={() => setErr('')}>×</button></p>}
@@ -517,7 +681,7 @@ export default function Board() {
             <section className="card fog c-dots">
               {d.fit ? (
                 <>
-                  <div className="head"><div><h2>Deadline fit</h2><div className="sub">{d.fit.p.name}: workstation hours left before {d.fit.n === 0 ? '3 pm today' : `${shortDay(d.fit.p.deadline)} 3 pm`}</div></div></div>
+                  <div className="head"><div><h2>Deadline fit</h2><div className="sub">{d.fit.p.name}: workstation hours left through {d.fit.n === 0 ? 'today' : `${shortDay(d.fit.p.deadline)}, ${monthDay(d.fit.p.deadline)}`}</div></div></div>
                   <div className="big">{d.fit.avail}h</div>
                   <div className="dots" aria-hidden="true">
                     {Array.from({ length: Math.min(48, Math.max(d.fit.avail, d.fit.need)) }, (_, i) => (
@@ -549,18 +713,38 @@ export default function Board() {
               </ul>
             </section>
 
+            {view === 'board' && (
+              <TaskBoard cols={d.cols} proj={d.proj} mode={mode} today={today} actions={actions} view={view} setView={setView} hoursLeft={d.hoursLeft} sched={sched} />
+            )}
+
             <section className="card c-proj">
               <div className="head">
                 <div><h2>Projects</h2><div className="sub">Tap one to open its tasks</div></div>
-                <button className="btn sm out" onClick={newProject}>New project</button>
+                <div className="head-r">
+                  {view === 'list' && <ViewTabs view={view} setView={setView} />}
+                  <button className="btn sm out" onClick={newProject}>New project</button>
+                </div>
               </div>
-              {s.projects.map((p) => (
+              {d.live.map((p) => (
                 <ProjectRow key={p.id} p={p} tasks={byProject[p.id].tasks} today={today} mode={mode}
                   open={!!open[p.id]} onOpen={() => setOpen((o) => ({ ...o, [p.id]: !o[p.id] }))} actions={actions} />
               ))}
+              {d.completed.length > 0 && (
+                <div className="completed">
+                  <button className="completed-h" aria-expanded={showDone} onClick={() => setShowDone(!showDone)}>
+                    <span>Completed</span><b>{d.completed.length}</b>
+                    <svg className="caret" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="m9 6 6 6-6 6-1.4-1.4L12.2 12 7.6 7.4z" /></svg>
+                  </button>
+                  {showDone && d.completed.map((p) => (
+                    <ProjectRow key={p.id} p={p} tasks={byProject[p.id].tasks} today={today} mode={mode} complete
+                      open={!!open[p.id]} onOpen={() => setOpen((o) => ({ ...o, [p.id]: !o[p.id] }))} actions={actions} />
+                  ))}
+                </div>
+              )}
             </section>
 
             <div className="c-side">
+              {view === 'list' && (
               <section className="card">
                 <div className="head">
                   <div><h2>Up next</h2><div className="sub">{mode === 'high' ? 'Workstation block' : 'Laptop block'}</div></div>
@@ -575,6 +759,7 @@ export default function Board() {
                     : <li className="task"><span className="t-title">Nothing queued for this block.</span></li>}
                 </ul>
               </section>
+              )}
 
               <section className="card">
                 <div className="head"><div><h2>Activity</h2><div className="sub">Logged updates</div></div></div>
@@ -602,6 +787,11 @@ export default function Board() {
       {composer !== null && s?.projects && (
         <Composer initial={composer} projects={s.projects.filter((p) => p.status !== 'done')} ai={s.ai}
           onClose={() => setComposer(null)} onSaved={(m) => { setComposer(null); load(); say(m); }} />
+      )}
+
+      {hoursOpen && (
+        <HoursSheet sched={sched} onClose={() => setHoursOpen(false)}
+          onSave={async (schedule) => { await api('/api/settings', { method: 'PUT', body: { schedule } }); setHoursOpen(false); await load(); say('Work hours saved'); }} />
       )}
 
       <div className={`toast ${toast ? 'on' : ''}`} role="status" aria-live="polite">{toast}</div>
