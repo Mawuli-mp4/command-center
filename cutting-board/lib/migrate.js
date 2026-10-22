@@ -1,5 +1,6 @@
 import { sql } from './db';
 import { EST_BACKFILL, EVENT_SEED } from './seed';
+import { importAdamCall } from './imports';
 
 let done = false;
 // Brings older boards up to date (new columns, settings and events tables). Safe to run repeatedly.
@@ -16,6 +17,14 @@ export async function migrate() {
         VALUES (${e.title}, ${e.kind}, ${e.start || null}, ${e.end || null}, ${e.notes || null})`;
     }
     await sql`INSERT INTO settings (key, value) VALUES ('events_seeded', 'true'::jsonb) ON CONFLICT (key) DO NOTHING`;
+  }
+  await sql`ALTER TABLE events ADD COLUMN IF NOT EXISTS parent_id INT`;
+  await sql`ALTER TABLE events ADD COLUMN IF NOT EXISTS role TEXT`;
+  const [imported] = await sql`SELECT 1 AS x FROM settings WHERE key = 'import_adam_call'`;
+  if (!imported) {
+    // Claim the flag first so two cold starts can't both import.
+    const claimed = await sql`INSERT INTO settings (key, value) VALUES ('import_adam_call', 'true'::jsonb) ON CONFLICT (key) DO NOTHING RETURNING key`;
+    if (claimed.length) await importAdamCall(sql);
   }
   const cols = await sql`SELECT column_name FROM information_schema.columns WHERE table_name = 'tasks'`;
   const have = new Set(cols.map((c) => c.column_name));

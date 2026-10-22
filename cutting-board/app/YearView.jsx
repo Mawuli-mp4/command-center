@@ -14,6 +14,7 @@ export const KINDS = {
   content: { label: 'Content', color: '#0a8fb0' },
   deadline: { label: 'Project deadlines', color: 'var(--text)' },
 };
+export const ROLES = { prep: 'Prep', rollout: 'Rollout', launch: 'Launch content', followup: 'Follow-up', support: 'Supporting' };
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const SEASONS = [
   { name: 'Winter', months: [11, 0, 1], fill: '#99ecff' },
@@ -63,7 +64,7 @@ function countdown(e, today) {
   return `In ${n} days`;
 }
 
-function EventSheet({ initial, onClose, onSave, onDelete }) {
+function EventSheet({ initial, anchors, hasKids, onClose, onSave, onDelete }) {
   const [f, setF] = useState({ title: '', kind: 'event', start: '', end: '', notes: '', ...initial });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -97,6 +98,23 @@ function EventSheet({ initial, onClose, onSave, onDelete }) {
             </label>
           </div>
           <p className="ev-hint">Leave the date empty to keep it under “No date yet”.</p>
+          {hasKids ? <p className="ev-hint">Other items are linked to this one, so it leads its own campaign.</p> : (
+            <div className="ev-dates">
+              <label className="field">Part of
+                <select value={f.parent_id || ''} onChange={(e) => setF((x) => ({ ...x, parent_id: e.target.value ? Number(e.target.value) : null, role: x.role || 'support' }))}>
+                  <option value="">Nothing, it stands alone</option>
+                  {anchors.filter((a) => a.id !== f.id).map((a) => <option key={a.id} value={a.id}>{a.title}</option>)}
+                </select>
+              </label>
+              {f.parent_id ? (
+                <label className="field">Role
+                  <select value={f.role || 'support'} onChange={set('role')}>
+                    {Object.entries(ROLES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                  </select>
+                </label>
+              ) : <span />}
+            </div>
+          )}
           <label className="field">Notes
             <textarea rows={3} value={f.notes || ''} onChange={set('notes')} />
           </label>
@@ -123,12 +141,25 @@ export default function YearView({ events, projects, today, onSave, onDelete }) 
     return [...ev, ...dl];
   }, [events, projects]);
 
+  const evById = useMemo(() => Object.fromEntries(events.map((e) => [e.id, e])), [events]);
+  const anchors = events.filter((e) => !e.parent_id);
+  const hasKids = (id) => events.some((e) => e.parent_id === id);
   const dated = items.filter((e) => e.start && !hidden[e.kind]);
   const onRing = dated.filter((e) => inCycle(e.start, cy) || (e.end && inCycle(e.end, cy)));
   const upcoming = dated.filter((e) => (e.end || e.start) >= today).sort((a, b) => a.start.localeCompare(b.start));
   const undated = items.filter((e) => !e.start);
   const next = upcoming[0] || null;
   const shown = (focus && items.find((e) => e.key === focus)) || next;
+  // Campaign = a main item plus the items linked to it.
+  const famId = shown && shown.editable ? (shown.parent_id || shown.id) : null;
+  const family = famId ? items.filter((e) => e.editable && (e.id === famId || e.parent_id === famId)) : [];
+  const campaign = family.length > 1 ? {
+    anchor: family.find((e) => e.id === famId),
+    kids: family.filter((e) => e.id !== famId).sort((a, b) => (a.start || '9999').localeCompare(b.start || '9999')),
+  } : null;
+  const famKeys = new Set(family.map((e) => e.key));
+  const dimOthers = !!(focus && campaign);
+  const partOf = (e) => (e.parent_id && evById[e.parent_id] ? `${ROLES[e.role] || 'Supporting'} · ${evById[e.parent_id].title}` : null);
   const todayOn = inCycle(today, cy);
   const ta = angleOf(today);
   const boundary = monthAngle(0);
@@ -185,6 +216,26 @@ export default function YearView({ events, projects, today, onSave, onDelete }) 
                 </g>
               );
             })()}
+            <circle cx={C} cy={C} r={OUTER} fill="transparent" onClick={() => setFocus(null)} />
+            {campaign && (() => {
+              const posOf = (e) => (e.start && inCycle(e.start, cy) && !hidden[e.kind] ? { r: TRACKS[e.kind] || TRACKS.event, a: angleOf(e.start) } : null);
+              const from = posOf(campaign.anchor);
+              if (!from) return null;
+              const [x0, y0] = pt(from.r, from.a);
+              return (
+                <g aria-hidden="true" fill="none" strokeWidth="2" strokeDasharray="5 5">
+                  {campaign.kids.map((k) => {
+                    const to = posOf(k);
+                    if (!to) return null;
+                    let a1 = to.a;
+                    if (a1 - from.a > Math.PI) a1 -= Math.PI * 2;
+                    if (from.a - a1 > Math.PI) a1 += Math.PI * 2;
+                    const [x1, y1] = pt(to.r, to.a), [qx, qy] = pt(Math.min(from.r, to.r) * 0.62, (from.a + a1) / 2);
+                    return <path key={k.key} d={`M${x0} ${y0} Q${qx} ${qy} ${x1} ${y1}`} stroke={KINDS[k.kind]?.color || KINDS.event.color} />;
+                  })}
+                </g>
+              );
+            })()}
             {todayOn && (() => {
               const [x0, y0] = pt(INNER, ta), [x1, y1] = pt(OUTER + 10, ta);
               return <g aria-hidden="true"><line x1={x0} y1={y0} x2={x1} y2={y1} stroke="var(--hot)" strokeWidth="3" strokeLinecap="round" /><circle cx={x1} cy={y1} r="6" fill="var(--hot)" /></g>;
@@ -194,14 +245,15 @@ export default function YearView({ events, projects, today, onSave, onDelete }) 
               const color = KINDS[e.kind]?.color || KINDS.event.color;
               const past = (e.end || e.start) < today;
               const active = shown && shown.key === e.key;
-              const sel = { onClick: () => setFocus(e.key), onMouseEnter: () => setFocus(e.key), style: { cursor: 'pointer' } };
+              const sel = { onClick: (ev) => { ev.stopPropagation(); setFocus(e.key); }, onMouseEnter: () => setFocus(e.key), style: { cursor: 'pointer' } };
+              const op = dimOthers && !famKeys.has(e.key) ? 0.18 : past ? 0.4 : 1;
               if (e.end) {
                 const a0 = angleOf(clampToCycle(e.start, true));
                 let a1 = angleOf(clampToCycle(e.end, false)) + 0.01;
                 if (a1 < a0) a1 += Math.PI * 2;
                 a1 = Math.max(a1, a0 + 0.035);
                 return (
-                  <g key={e.key} {...sel} opacity={past ? 0.4 : 1}>
+                  <g key={e.key} {...sel} opacity={op}>
                     <path d={arc(r, a0, a1)} stroke={color} strokeWidth={active ? 22 : 16} strokeLinecap="round" fill="none" />
                     <path d={arc(r, a0, a1)} stroke="transparent" strokeWidth="36" fill="none"><title>{`${e.title} · ${fmtRange(e)}`}</title></path>
                   </g>
@@ -209,7 +261,7 @@ export default function YearView({ events, projects, today, onSave, onDelete }) 
               }
               const [x, y] = pt(r, angleOf(e.start));
               return (
-                <g key={e.key} {...sel} opacity={past ? 0.4 : 1}>
+                <g key={e.key} {...sel} opacity={op}>
                   <circle cx={x} cy={y} r={active ? 13 : 9} fill={color} stroke="var(--bg)" strokeWidth="3" />
                   <circle cx={x} cy={y} r="20" fill="transparent"><title>{`${e.title} · ${fmtRange(e)}`}</title></circle>
                 </g>
@@ -246,6 +298,27 @@ export default function YearView({ events, projects, today, onSave, onDelete }) 
             ))}
           </div>
 
+          {campaign && (
+            <div className="yr-camp">
+              <div className="yr-camp-h"><h3>Campaign</h3>{focus && <button className="link" onClick={() => setFocus(null)}>Show everything</button>}</div>
+              <button className="yr-camp-main" onClick={() => setSheet(campaign.anchor)}>
+                <i style={{ background: KINDS[campaign.anchor.kind]?.color }} />
+                <span className="yl-main"><span className="yl-title">{campaign.anchor.title}</span><span className="yl-date">{fmtRange(campaign.anchor)}</span></span>
+              </button>
+              <ul className="yr-list yr-kids">
+                {campaign.kids.map((k) => (
+                  <li key={k.key} className={shown && shown.key === k.key ? 'on' : ''}>
+                    <button onMouseEnter={() => setFocus(k.key)} onClick={() => setSheet(k)}>
+                      <i style={{ background: KINDS[k.kind]?.color }} />
+                      <span className="yl-main"><span className="yl-title">{k.title}</span><span className="yl-date">{ROLES[k.role] || 'Supporting'} · {fmtRange(k)}</span></span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <button className="btn sm out" onClick={() => setSheet({ parent_id: campaign.anchor.id, role: 'support', kind: 'content' })}>Add to this campaign</button>
+            </div>
+          )}
+
           <h3>Coming up</h3>
           {upcoming.length === 0 ? <p className="fit">Nothing dated ahead. Add a date to place it on the ring.</p> : (
             <ul className="yr-list">
@@ -253,7 +326,7 @@ export default function YearView({ events, projects, today, onSave, onDelete }) 
                 <li key={e.key} className={shown && shown.key === e.key ? 'on' : ''}>
                   <button onMouseEnter={() => { setFocus(e.key); setCy(cycleOf(e.start)); }} onClick={() => (e.editable ? setSheet(e) : setFocus(e.key))}>
                     <i style={{ background: KINDS[e.kind]?.color }} />
-                    <span className="yl-main"><span className="yl-title">{e.title}</span><span className="yl-date">{fmtRange(e)}</span></span>
+                    <span className="yl-main"><span className="yl-title">{e.title}</span><span className="yl-date">{fmtRange(e)}{partOf(e) ? ` · ${partOf(e)}` : ''}</span></span>
                     <span className="yl-when">{countdown(e, today)}</span>
                   </button>
                 </li>
@@ -266,9 +339,9 @@ export default function YearView({ events, projects, today, onSave, onDelete }) 
             <ul className="yr-list undated">
               {undated.map((e) => (
                 <li key={e.key}>
-                  <button onClick={() => setSheet(e)}>
+                  <button onMouseEnter={() => setFocus(e.key)} onClick={() => setSheet(e)}>
                     <i style={{ background: KINDS[e.kind]?.color }} />
-                    <span className="yl-main"><span className="yl-title">{e.title}</span>{e.notes && <span className="yl-date">{e.notes}</span>}</span>
+                    <span className="yl-main"><span className="yl-title">{e.title}</span>{(partOf(e) || e.notes) && <span className="yl-date">{partOf(e) || e.notes}</span>}</span>
                     <span className="yl-when set">Set date</span>
                   </button>
                 </li>
@@ -279,7 +352,7 @@ export default function YearView({ events, projects, today, onSave, onDelete }) 
       </div>
 
       {sheet && (
-        <EventSheet initial={sheet} onClose={() => setSheet(null)}
+        <EventSheet initial={sheet} anchors={anchors} hasKids={!!sheet.id && hasKids(sheet.id)} onClose={() => setSheet(null)}
           onSave={async (f) => { await onSave(f); setSheet(null); if (f.start) setCy(cycleOf(f.start)); }}
           onDelete={async (id) => { await onDelete(id); setSheet(null); setFocus(null); }} />
       )}

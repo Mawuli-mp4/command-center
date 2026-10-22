@@ -667,7 +667,7 @@ export default function Board() {
           <div className="grid">
             <YearView events={s.events || []} projects={d.live.filter((p) => p.status === 'active')} today={today}
               onSave={async (f) => {
-                const body = { title: f.title, kind: f.kind, start: f.start || null, end: f.end || null, notes: f.notes || null };
+                const body = { title: f.title, kind: f.kind, start: f.start || null, end: f.end || null, notes: f.notes || null, parent_id: f.parent_id || null, role: f.role || null };
                 if (f.id) await api(`/api/events/${f.id}`, { method: 'PATCH', body });
                 else await api('/api/events', { method: 'POST', body });
                 await load(); say(f.id ? 'Saved' : 'Added to the year');
