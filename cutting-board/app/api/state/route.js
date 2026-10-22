@@ -25,7 +25,10 @@ export async function GET() {
   const closed = await sql`SELECT to_char((done_at AT TIME ZONE 'America/Toronto')::date, 'YYYY-MM-DD') AS day,
     compute, count(*)::int AS n FROM tasks
     WHERE done = true AND done_at >= now() - interval '8 days' GROUP BY 1, 2`;
+  const events = await sql`SELECT id, title, kind, notes,
+    to_char(start_date, 'YYYY-MM-DD') AS start, to_char(end_date, 'YYYY-MM-DD') AS "end"
+    FROM events ORDER BY start_date NULLS LAST, id`;
   const [sched] = await sql`SELECT value FROM settings WHERE key = 'schedule'`;
   const schedule = normalizeSchedule(sched?.value);
-  return Response.json({ projects, tasks, updates, closed, schedule, ai: !!process.env.ANTHROPIC_API_KEY });
+  return Response.json({ projects, tasks, updates, closed, schedule, events, ai: !!process.env.ANTHROPIC_API_KEY });
 }

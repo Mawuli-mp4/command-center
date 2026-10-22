@@ -1,8 +1,10 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import YearView from './YearView';
 import { DEFAULT_SCHEDULE, DAY_NAMES, normalizeSchedule, addDays, dayHours, montrealNow, blockAt, nextSwitch, wsHoursThrough, fmtHour, summarize } from '@/lib/hours';
 
 const VIEW_KEY = 'cb.view';
+const PAGE_KEY = 'cb.page';
 const LANE_COLORS = { Strategy: '#6120ee', Production: '#4a17b0', Hopamine: '#0a8fb0', Business: '#ab77ff' };
 const FALLBACK = ['#0a4dce', '#6120ee', '#0a8fb0', '#ab77ff', '#4a17b0'];
 const laneColor = (l) => LANE_COLORS[l] || FALLBACK[[...(l || 'Other')].reduce((a, c) => a + c.charCodeAt(0), 0) % FALLBACK.length];
@@ -64,7 +66,7 @@ function Pixel({ i, size, style, className = '' }) {
 }
 
 /* ---------------- band ---------------- */
-function Band({ clock, mode, sched, onLog, onNotify, onHours, pushState }) {
+function Band({ clock, mode, sched, onLog, onNotify, onHours, pushState, page, setPage }) {
   const [text, setText] = useState('');
   const inputRef = useRef(null);
   const mins = clock.hour * 60 + clock.minute;
@@ -77,11 +79,17 @@ function Band({ clock, mode, sched, onLog, onNotify, onHours, pushState }) {
   return (
     <div className="band">
       <Pixel i={0} size={12} style={{ right: '6%', top: 18, transform: 'rotate(-6deg)', opacity: 0.9 }} />
-      <Pixel i={1} size={10} className="sm-hide" style={{ left: '24%', top: 10, transform: 'rotate(5deg)', opacity: 0.85 }} />
+      <Pixel i={1} size={10} className="sm-hide" style={{ left: '38%', top: 10, transform: 'rotate(5deg)', opacity: 0.85 }} />
       <Pixel i={2} size={8} className="sm-hide" style={{ right: '30%', top: 64, opacity: 0.9 }} />
       <div className="wrap">
         <div className="top">
-          <span className="brand">Cutting Board</span>
+          <div className="top-l">
+            <span className="brand">Cutting Board</span>
+            <div className="nav" role="tablist" aria-label="Section">
+              <button role="tab" aria-selected={page === 'board'} onClick={() => setPage('board')}>Board</button>
+              <button role="tab" aria-selected={page === 'year'} onClick={() => setPage('year')}>Year</button>
+            </div>
+          </div>
           <div className="top-r">
             <button className="ghost" onClick={onNotify} disabled={pushState === 'working'}>
               {pushState === 'on' ? <><span className="lg">Test </span>notification</> : pushState === 'working' ? 'Turning on…' : <><span className="lg">Turn on </span>notifications</>}
@@ -496,6 +504,8 @@ export default function Board() {
   const [view, setViewState] = useState('list');
   const [showDone, setShowDone] = useState(false);
   const [hoursOpen, setHoursOpen] = useState(false);
+  const [page, setPageState] = useState('board');
+  const setPage = useCallback((v) => { setPageState(v); try { localStorage.setItem(PAGE_KEY, v); } catch {} }, []);
   const setView = useCallback((v) => { setViewState(v); try { localStorage.setItem(VIEW_KEY, v); } catch {} }, []);
   const [pushState, setPushState] = useState('idle');
   const [toast, setToast] = useState('');
@@ -508,7 +518,10 @@ export default function Board() {
   useEffect(() => {
     setClock(montreal());
     load();
-    try { const v = localStorage.getItem(VIEW_KEY); if (v === 'board' || v === 'list') setViewState(v); } catch {}
+    try {
+      const v = localStorage.getItem(VIEW_KEY); if (v === 'board' || v === 'list') setViewState(v);
+      const pg = localStorage.getItem(PAGE_KEY); if (pg === 'board' || pg === 'year') setPageState(pg);
+    } catch {}
     const t = setInterval(() => setClock(montreal()), 30000);
     const vis = () => { if (document.visibilityState === 'visible') { setClock(montreal()); load(); } };
     document.addEventListener('visibilitychange', vis);
@@ -644,13 +657,26 @@ export default function Board() {
   const d = derived;
   return (
     <>
-      <Band clock={clock} mode={mode} sched={sched} onLog={(t) => setComposer(t)} onNotify={enablePush} onHours={() => setHoursOpen(true)} pushState={pushState} />
+      <Band clock={clock} mode={mode} sched={sched} onLog={(t) => setComposer(t)} onNotify={enablePush} onHours={() => setHoursOpen(true)} pushState={pushState} page={page} setPage={setPage} />
 
       <main className="wrap main">
         {err && <p className="err banner" role="alert">{err}<button className="x" aria-label="Dismiss" onClick={() => setErr('')}>×</button></p>}
         {!d && !err && <p className="loading">Loading board…</p>}
 
-        {d && (
+        {d && page === 'year' && (
+          <div className="grid">
+            <YearView events={s.events || []} projects={d.live.filter((p) => p.status === 'active')} today={today}
+              onSave={async (f) => {
+                const body = { title: f.title, kind: f.kind, start: f.start || null, end: f.end || null, notes: f.notes || null };
+                if (f.id) await api(`/api/events/${f.id}`, { method: 'PATCH', body });
+                else await api('/api/events', { method: 'POST', body });
+                await load(); say(f.id ? 'Saved' : 'Added to the year');
+              }}
+              onDelete={async (id) => { await api(`/api/events/${id}`, { method: 'DELETE' }); await load(); say('Deleted'); }} />
+          </div>
+        )}
+
+        {d && page === 'board' && (
           <div className="grid">
             <section className="card c-week"><WeekChart week={d.week} /></section>
 

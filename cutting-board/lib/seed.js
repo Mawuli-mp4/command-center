@@ -85,3 +85,14 @@ export const EST_BACKFILL = {
   'Ingest, organize bins, sync audio': 1.5, 'Selects and string-out': 2.5, '30-minute assembly': 4,
   'Fine cut and music': 3, 'Color pass': 2, 'Sound mix': 1.5, 'Export v1 and send to client': 1,
 };
+
+// Year map: first entries, Oct 2026. kind: 'event' | 'drop' | 'content'. No start date = not scheduled yet.
+export const EVENT_SEED = [
+  { title: 'Apathy is Boring residency: media literacy seminar', kind: 'event', start: '2026-10-28', end: '2026-10-30',
+    notes: 'Invited as a creator. Shooting content for myself and promoting it through three paid reels.' },
+  { title: 'Webinar with Climate propagandist', kind: 'event', start: '2026-11-07' },
+  { title: 'Hey change drop', kind: 'drop', start: '2026-12-09' },
+  { title: 'Residency posts (3 paid reels)', kind: 'content', notes: 'From the Apathy is Boring residency.' },
+  { title: 'Hackathon posts (3–5)', kind: 'content' },
+  { title: 'Ted Talk clips', kind: 'content' },
+];
